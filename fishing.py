@@ -31,84 +31,6 @@ pytesseract.tesseract_cmd = path_to_tesseract
 
 
 
-
-
-
-SendInput = ctypes.windll.user32.SendInput
-
-# W = 0x11
-# A = 0x1E
-# S = 0x1F
-# D = 0x20
-# E = 0x12
-# Z = 0x2C
-# UP = 0xC8
-# DOWN = 0xD0
-# LEFT = 0xCB
-# RIGHT = 0xCD
-# ENTER = 0x1C 
-
-# Full list - http://web-old.archive.org/web/20190801085838/http://www.gamespp.com/directx/directInputKeyboardScanCodes.html
-
-# TODOThings 1 - Add time randomizattion for keypress events 2 - Only cap middle of screen 200x200 pixels for fastter and more accurate matching 3 - Make code less ghetto kekw 
-
-PUL = ctypes.POINTER(ctypes.c_ulong)
-class KeyBdInput(ctypes.Structure):
-    _fields_ = [("wVk", ctypes.c_ushort),
-                ("wScan", ctypes.c_ushort),
-                ("dwFlags", ctypes.c_ulong),
-                ("time", ctypes.c_ulong),
-                ("dwExtraInfo", PUL)]
-
-class HardwareInput(ctypes.Structure):
-    _fields_ = [("uMsg", ctypes.c_ulong),
-                ("wParamL", ctypes.c_short),
-                ("wParamH", ctypes.c_ushort)]
-
-class MouseInput(ctypes.Structure):
-    _fields_ = [("dx", ctypes.c_long),
-                ("dy", ctypes.c_long),
-                ("mouseData", ctypes.c_ulong),
-                ("dwFlags", ctypes.c_ulong),
-                ("time",ctypes.c_ulong),
-                ("dwExtraInfo", PUL)]
-
-class Input_I(ctypes.Union):
-    _fields_ = [("ki", KeyBdInput),
-                 ("mi", MouseInput),
-                 ("hi", HardwareInput)]
-
-class Input(ctypes.Structure):
-    _fields_ = [("type", ctypes.c_ulong),
-                ("ii", Input_I)]
-
-def pressKey(hexKeyCode):
-    extra = ctypes.c_ulong(0)
-    ii_ = Input_I()
-    ii_.ki = KeyBdInput( 0, hexKeyCode, 0x0008, 0, ctypes.pointer(extra) )
-    x = Input( ctypes.c_ulong(1), ii_ )
-    ctypes.windll.user32.SendInput(1, ctypes.pointer(x), ctypes.sizeof(x))
-
-def releaseKey(hexKeyCode):
-    extra = ctypes.c_ulong(0)
-    ii_ = Input_I()
-    ii_.ki = KeyBdInput( 0, hexKeyCode, 0x0008 | 0x0002, 0, 
-ctypes.pointer(extra) )
-    x = Input( ctypes.c_ulong(1), ii_ )
-    ctypes.windll.user32.SendInput(1, ctypes.pointer(x), ctypes.sizeof(x))
-
-
-
-# COOLDOWN_ICON_LOCATION = (659, 523)
-COOLDOWN_ICON_LOCATION = (653, 522)
-
-COOLDOWN_ICON_DIM = (31,31)
-FISHING_MARK_LOCATION = (300, 620)
-FISHING_MARK_DIM = (50,30)
-# ex_images = [Vision2('ex_mark.png'), Vision2('ex_mark2.png'), Vision2('ex_mark3.png'), Vision2('ex_mark4.png'), Vision2('ex_mark5.png')]
-# cooldown_images = [Vision2('fish_cooldown.png'), Vision2('fish_cooldown2.jpg')]
-# fish_active = Vision2('fish_cooldown_active.png')
-# fish_inactive = Vision2('fish_cooldown_inactive.png')
 is_fishing = False
 click_delay_after_catch = 6
 detection_threshold = 0.6
@@ -501,7 +423,12 @@ def get_tesserract_text(top_left_x, top_left_y, bottom_right_x, bottom_right_y):
     text = pytesseract.image_to_string(resized)
     return resized, text
 
-
+def get_tesserract_data(top_left_x, top_left_y, bottom_right_x, bottom_right_y):
+    img = ImageGrab.grab(bbox=(top_left_x, top_left_y, bottom_right_x, bottom_right_y))
+    img = np.array(img)
+    resized = cv2.resize(img,(0,0),fx=3, fy=3)
+    data = pytesseract.image_to_data(resized)
+    return resized, data
 
 def check_afk():
     print("tikrina afk")
@@ -522,7 +449,6 @@ def check_afk():
         sleep(1)
         keyboard.release(Key.enter) 
 
-    resized = cv2.resize(resized, (960, 540)) 
     frame = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
     cv2.imshow("afk", frame)
         
@@ -533,39 +459,53 @@ def check_fishing_spots():
     top_left_y = 400
     bottom_right_x = 1280
     bottom_right_y = 720
-    
-    resized, text = get_tesserract_text(top_left_x, top_left_y, bottom_right_x, bottom_right_y)
 
-    print(text[:-1])
-    print(len(text))
-    if len(text) == 6:
-        print(text[:-1])
-        pyautogui.write(text)
-        keyboard.press(Key.enter)
-        sleep(1)
-        keyboard.release(Key.enter) 
+    resized, results = get_tesserract_data(top_left_x, top_left_y, bottom_right_x, bottom_right_y)
+    print(results)
+    for i in range(0, len(results["text"])):
+        # extract the bounding box coordinates of the text region from
+        # the current result
+        x = results["left"][i]
+        y = results["top"][i]
+        w = results["width"][i]
+        h = results["height"][i]
+        # extract the OCR text itself along with the confidence of the
+        # text localization
+        text = results["text"][i]
+        conf = int(results["conf"][i])
+        # filter out weak confidence text localizations
+        if conf > 0.6:
+            # display the confidence and text to our terminal
+            print("Confidence: {}".format(conf))
+            print("Text: {}".format(text))
+            print("")
+            # strip out non-ASCII text so we can draw the text on the image
+            # using OpenCV, then draw a bounding box around the text along
+            # with the text itself
+            text = "".join([c if ord(c) < 128 else "" for c in text]).strip()
+            cv2.rectangle(resized, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            cv2.putText(resized, text, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX,
+                1.2, (0, 0, 255), 3)
 
     resized = cv2.resize(resized, (960, 540)) 
     frame = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
     cv2.imshow("fishing", frame)
 
 
-SPAM_BUTTONS = [0x12]
-def spam_e():
+def press_e():
     print('pressing E')
-    for button in SPAM_BUTTONS:
-        pressKey(button)
-        time.sleep(0.1)
-        releaseKey(button)
+    pyautogui.write('e')
+
 
 def fishing():
     print('fishing')
-    spam_e()
+    # press_e()
+    check_fishing_spots()
 
 print("booting up")
 time.sleep(5)
 
-FRAME_UPDATE = 0.1
+FRAME_UPDATE = 1
 AFK_INPUT_DELAY = 5
 last_frame_update = time.time()
 while(True):
@@ -573,11 +513,11 @@ while(True):
     if(t - last_frame_update > FRAME_UPDATE):
         print(t - last_frame_update)
         check_afk()
+        fishing()
         last_frame_update = time.time()
 
 
 
-    # fishing()
 
     # print('show')
     # frame = cv2.cvtColor(get_minimap(), cv2.COLOR_BGR2RGB)
